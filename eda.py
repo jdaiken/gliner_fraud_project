@@ -33,17 +33,25 @@ from anomaly_detection import engineer_features
 
 warnings.filterwarnings("ignore")
 
-# ── Plot styling ──────────────────────────────────────────────────────────────
-# A minimal, professional color palette consistent with risk dashboards.
-# PRIMARY = flagged/high-risk items; SECONDARY = normal/background items.
-PRIMARY   = "#1B2A4A"   # navy — flagged / fraud / primary bars
-SECONDARY = "#2E7D8C"   # teal — normal / scored / secondary bars
-GOLD      = "#C8972B"   # gold — accent / highlight / threshold lines
-RED       = "#C0392B"   # red  — HIGH risk tier
-ORANGE    = "#E67E22"   # orange — MEDIUM risk tier
-GREEN     = "#27AE60"   # green — LOW risk tier / normal
-LIGHT_GRAY = "#F5F5F5"  # background fill
-MID_GRAY   = "#888888"  # axis labels and captions
+# ── Plot styling (CFPB Design System) ─────────────────────────────────────────
+from dashboard_theme import (
+    CFPB_DARK_NAVY,
+    CFPB_GOLD,
+    CFPB_GRAY,
+    CFPB_GRAY_LIGHT,
+    CFPB_GREEN,
+    CFPB_PACIFIC,
+    CFPB_RED,
+)
+
+PRIMARY = CFPB_DARK_NAVY
+SECONDARY = CFPB_PACIFIC
+GOLD = CFPB_GOLD
+RED = CFPB_RED
+ORANGE = CFPB_GOLD
+GREEN = CFPB_GREEN
+LIGHT_GRAY = CFPB_GRAY_LIGHT
+MID_GRAY = CFPB_GRAY
 
 # Apply a clean, minimal matplotlib style globally
 plt.rcParams.update({

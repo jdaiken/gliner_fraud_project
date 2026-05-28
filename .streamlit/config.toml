@@ -1,0 +1,16 @@
+[server]
+headless = true
+# Port set by launch_dashboard.py (--server.port); do not hardcode 8501 here
+runOnSave = false
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[runner]
+fastReruns = true
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = false

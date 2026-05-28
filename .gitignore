@@ -6,6 +6,8 @@ venv/
 data/
 outputs/
 *.csv
+*.tmp.xlsx
+prophet_hourly_forecast.csv
 .DS_Store
 .idea/
 .vscode/

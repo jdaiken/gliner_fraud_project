@@ -19,7 +19,18 @@ ARTIFACTS_DIR = OUTPUTS_DIR / "model_artifacts"
 TRANSACTIONS_CSV = DATA_DIR / "transactions.csv"
 SCORED_CSV = OUTPUTS_DIR / "scored_transactions.csv"
 SAR_NARRATIVES_CSV = OUTPUTS_DIR / "sar_narratives.csv"
+SAR_TOPICS_CSV = OUTPUTS_DIR / "sar_topic_summary.csv"
+SAR_TOPIC_ASSIGNMENTS_CSV = OUTPUTS_DIR / "sar_topic_assignments.csv"
+SAR_WORD_FREQ_CSV = OUTPUTS_DIR / "sar_word_frequencies.csv"
+SAR_TOPIC_META_JSON = OUTPUTS_DIR / "sar_topic_model_meta.json"
 RISK_REGISTER_CSV = OUTPUTS_DIR / "risk_register.csv"
+WORKPAPER_XLSX = OUTPUTS_DIR / "fraud_risk_workpaper.xlsx"
+PROFIT_SUMMARY_CSV = OUTPUTS_DIR / "profit_summary.csv"
+PROFIT_DETAIL_CSV = OUTPUTS_DIR / "profit_transaction_detail.csv"
+PROFIT_BY_TIER_CSV = OUTPUTS_DIR / "profit_by_tier.csv"
+PROFIT_BY_TYPE_CSV = OUTPUTS_DIR / "profit_by_type.csv"
+PROFIT_BY_COUNTRY_CSV = OUTPUTS_DIR / "profit_by_country.csv"
+PROFIT_TOP_ACCOUNTS_CSV = OUTPUTS_DIR / "profit_top_accounts.csv"
 
 RISK_CALIBRATION_JSON = ARTIFACTS_DIR / "risk_calibration.json"
 TYPE_ENCODING_JSON = ARTIFACTS_DIR / "type_encoding.json"
@@ -65,6 +76,9 @@ SAR_MAX_NARRATIVES = 100
 GLINER_MODEL = "urchade/gliner_medium-v2.1"
 GLINER_THRESHOLD = 0.4
 GLINER_SAMPLE_SIZE = 50  # set to None for full extraction in pipeline
+# Try Hugging Face cache first (no network). If load fails, use regex fallback so pipeline completes.
+GLINER_PREFER_LOCAL_CACHE = True
+GLINER_ALLOW_FALLBACK = True
 
 FEATURE_COLS = [
     "amount",

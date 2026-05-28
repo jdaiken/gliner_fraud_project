@@ -4,103 +4,179 @@ gliner_extraction.py
 Extracts structured risk entities from SAR narratives using GLiNER,
 producing a populated risk register CSV ready for analyst review.
 
-WHY GLINER?
-GLiNER (Generalist and Lightweight Named Entity Recognition) is a zero-shot
-NLP model that can identify any entity type from unstructured text using only
-a natural language label — no training data or fine-tuning required. This
-makes it well-suited to financial risk use cases where:
-
-  - Entity types change frequently (new risk frameworks, new taxonomies)
-  - Labeled training data is scarce or confidential
-  - Local CPU inference is required (data privacy — no API calls to third parties)
-  - A single lightweight model replaces multiple specialized extractors
-
-Architecture: GLiNER uses a bidirectional transformer encoder (DeBERTa-based)
-with a span prediction head. Given a text and a list of entity labels, it
-predicts which text spans correspond to which labels with a confidence score.
-
-MODEL SELECTION:
-  urchade/gliner_medium-v2.1 — good balance of speed and accuracy, ~300MB
-  urchade/gliner_large-v2.1  — higher accuracy, slower, ~700MB
-  urchade/gliner_small-v2.1  — fastest, smaller, lower accuracy
-
-ENTITY LABELS:
-Labels are natural language strings — they are not a fixed taxonomy.
-Change them to match your risk framework without any retraining.
+When Hugging Face is unreachable, uses a regex fallback so the pipeline
+can still finish (set GLINER_ALLOW_FALLBACK=False to require GLiNER).
 """
 
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+
 import pandas as pd
-from gliner import GLiNER
 
 import config
 
+# Lazy import — GLiNER pulls torch/transformers and may hit the network on load.
+GLiNER = None
 
 # ── Entity labels ─────────────────────────────────────────────────────────────
-# These are the entity types GLiNER will look for in each SAR narrative.
-# They are natural language strings, not codes — the model uses semantic
-# similarity to match spans in the text to these label descriptions.
-# Add, remove, or rename labels to match your organization's risk taxonomy.
 ENTITY_LABELS = [
-    "account identifier",       # account numbers, customer IDs (e.g., "C7162857")
-    "transaction amount",       # dollar values (e.g., "$19,553.53")
-    "transaction type",         # TRANSFER, CASH_OUT, PAYMENT, etc.
-    "country or jurisdiction",  # geographic risk indicators (e.g., "NG", "Ukraine")
-    "time or hour",             # time-of-activity flags (e.g., "03:00 (late night)")
-    "risk indicator",           # named risk factors from the indicator library
-    "balance amount",           # account balance values
-    "report identifier",        # SAR IDs (e.g., "SAR-00001")
+    "account identifier",
+    "transaction amount",
+    "transaction type",
+    "country or jurisdiction",
+    "time or hour",
+    "risk indicator",
+    "balance amount",
+    "report identifier",
 ]
 
+_ACCOUNT_RE = re.compile(
+    r"(?:account|beneficiary account|agent account|via)\s+([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+_AMOUNT_RE = re.compile(r"\$[\d,]+(?:\.\d{2})?")
+_COUNTRY_RE = re.compile(
+    r"(?:from|originated from|Geographic origin|Country of origin|origin)\s*:?\s*([A-Z]{2})\b",
+    re.IGNORECASE,
+)
+_TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\b|late night|between\s+00:00")
+_TX_TYPES = ("TRANSFER", "CASH_OUT", "PAYMENT", "DEBIT", "CASH_IN")
 
-def load_model(model_name=None):
+
+def _import_gliner():
+    global GLiNER
+    if GLiNER is None:
+        from gliner import GLiNER as _GLiNER
+        GLiNER = _GLiNER
+    return GLiNER
+
+
+def model_is_cached(model_name: str | None = None) -> bool:
+    """True if model weights appear in the local Hugging Face cache."""
+    model_name = model_name or config.GLINER_MODEL
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        for filename in ("config.json", "model.safetensors", "pytorch_model.bin"):
+            if try_to_load_from_cache(model_name, filename) is not None:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def load_model(model_name=None, *, local_only: bool | None = None):
     """
-    Load the GLiNER model from Hugging Face Hub.
+    Load GLiNER from cache when possible; otherwise download from Hugging Face.
 
-    First call downloads the model weights (~300MB) and caches them locally
-    in ~/.cache/huggingface/. Subsequent calls load from cache instantly.
-    No API key or internet connection required after first download.
-
-    Args:
-        model_name: Hugging Face model identifier. Options:
-                    urchade/gliner_medium-v2.1 (default — balanced)
-                    urchade/gliner_large-v2.1  (higher accuracy, slower)
-                    urchade/gliner_small-v2.1  (fastest, lower accuracy)
-
-    Returns:
-        GLiNER: Loaded model ready for inference.
+    Raises on failure unless caller handles it and uses fallback extraction.
     """
     model_name = model_name or config.GLINER_MODEL
+    gliner_cls = _import_gliner()
+
+    if local_only is None:
+        local_only = config.GLINER_PREFER_LOCAL_CACHE
+
+    attempts: list[str] = []
+
+    if local_only:
+        print(f"Loading GLiNER model (local cache only): {model_name}")
+        prev_hf = os.environ.get("HF_HUB_OFFLINE")
+        prev_tf = os.environ.get("TRANSFORMERS_OFFLINE")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        try:
+            model = gliner_cls.from_pretrained(model_name, local_files_only=True)
+            print("Model loaded from local cache.")
+            return model
+        except Exception as exc:
+            attempts.append(f"offline cache: {exc}")
+        finally:
+            for key, val in (("HF_HUB_OFFLINE", prev_hf), ("TRANSFORMERS_OFFLINE", prev_tf)):
+                if val is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = val
+
     print(f"Loading GLiNER model: {model_name}")
-    model = GLiNER.from_pretrained(model_name)
-    print("Model loaded.")
-    return model
+    try:
+        model = gliner_cls.from_pretrained(model_name)
+        print("Model loaded.")
+        return model
+    except Exception as exc:
+        attempts.append(f"download: {exc}")
+        msg = (
+            "Could not load GLiNER. Common causes: no internet/DNS, firewall, or model not cached yet.\n"
+            f"  Model: {model_name}\n"
+            "  Fix (once online): python -c \"from gliner import GLiNER; "
+            f"GLiNER.from_pretrained('{model_name}')\"\n"
+            "  Or set GLINER_ALLOW_FALLBACK=True to build the register with regex extraction."
+        )
+        if attempts:
+            msg += "\n  Details: " + " | ".join(attempts)
+        raise RuntimeError(msg) from exc
 
 
 def extract_entities(model, text, threshold=None):
-    """
-    Run GLiNER entity extraction on a single narrative string.
-
-    The threshold controls confidence cutoff — lower values return more
-    entities with lower confidence; higher values return fewer but more
-    precise extractions. 0.4 works well for financial text; tune up to
-    0.5–0.6 if you see too many false positives.
-
-    Args:
-        model:     Loaded GLiNER model instance.
-        text:      SAR narrative string to extract entities from.
-        threshold: Minimum confidence score for an entity to be returned.
-
-    Returns:
-        list: Each element is a dict with keys:
-              {"text": str, "label": str, "score": float}
-    """
     threshold = threshold if threshold is not None else config.GLINER_THRESHOLD
     entities = model.predict_entities(text, ENTITY_LABELS, threshold=threshold)
     return entities
 
 
+def fallback_extract_entities(text: str, row: pd.Series | None = None) -> list[dict[str, Any]]:
+    """
+    Regex-based entity extraction when GLiNER cannot load (offline / no cache).
+    """
+    entities: list[dict[str, Any]] = []
+    if not text or not isinstance(text, str):
+        return entities
+
+    seen: set[tuple[str, str]] = set()
+
+    def add(span: str, label: str):
+        key = (label, span.strip())
+        if key in seen or not span.strip():
+            return
+        seen.add(key)
+        entities.append({"text": span.strip(), "label": label, "score": 0.5})
+
+    for m in _ACCOUNT_RE.finditer(text):
+        add(m.group(1), "account identifier")
+
+    for m in _AMOUNT_RE.finditer(text):
+        add(m.group(0), "transaction amount")
+
+    for m in _COUNTRY_RE.finditer(text):
+        add(m.group(1).upper(), "country or jurisdiction")
+
+    for m in _TIME_RE.finditer(text):
+        add(m.group(0), "time or hour")
+
+    for tx in _TX_TYPES:
+        if tx in text:
+            add(tx, "transaction type")
+
+    if "Risk indicators:" in text:
+        tail = text.split("Risk indicators:")[-1].strip().rstrip(".")
+        for part in tail.split(","):
+            add(part.strip(), "risk indicator")
+
+    if row is not None:
+        if pd.notna(row.get("type")):
+            add(str(row["type"]), "transaction type")
+        if pd.notna(row.get("country")):
+            add(str(row["country"]), "country or jurisdiction")
+        if pd.notna(row.get("amount")):
+            add(f"${float(row['amount']):,.2f}", "transaction amount")
+        if pd.notna(row.get("sar_id")):
+            add(str(row["sar_id"]), "report identifier")
+
+    return entities
+
+
 def _amount_in_extractions(amount, extracted_amounts, narrative):
-    """Check whether structured amount appears in GLiNER output or narrative."""
     if pd.isna(amount):
         return False
     amount_str = f"{float(amount):,.2f}"
@@ -110,7 +186,6 @@ def _amount_in_extractions(amount, extracted_amounts, narrative):
 
 
 def _country_in_extractions(country, extracted_countries, narrative):
-    """Check whether structured country appears in GLiNER output or narrative."""
     if pd.isna(country) or not str(country).strip():
         return False
     c = str(country).strip()
@@ -119,129 +194,109 @@ def _country_in_extractions(country, extracted_countries, narrative):
 
 
 def entities_to_dict(entities):
-    """
-    Flatten GLiNER's entity list into a structured dict for the risk register.
-
-    GLiNER can return multiple entities of the same type (e.g., two account
-    IDs in one narrative). This function deduplicates and joins them with ' | '
-    so each output column contains a clean, readable string.
-
-    The label_map below translates GLiNER's natural language labels to
-    snake_case column names for the output DataFrame. Update the map if
-    you change ENTITY_LABELS above.
-
-    Args:
-        entities: List of entity dicts from extract_entities().
-
-    Returns:
-        dict: Column-name → extracted value string mapping.
-              Empty string "" for any label with no extractions.
-    """
-    # Initialize all output fields as empty lists
     fields = {
-        "extracted_accounts":     [],
-        "extracted_amounts":      [],
-        "extracted_tx_types":     [],
-        "extracted_countries":    [],
-        "extracted_time_flags":   [],
+        "extracted_accounts": [],
+        "extracted_amounts": [],
+        "extracted_tx_types": [],
+        "extracted_countries": [],
+        "extracted_time_flags": [],
         "extracted_risk_factors": [],
-        "extracted_balances":     [],
+        "extracted_balances": [],
     }
 
-    # Map GLiNER label strings to output column names
     label_map = {
-        "account identifier":      "extracted_accounts",
-        "transaction amount":      "extracted_amounts",
-        "transaction type":        "extracted_tx_types",
+        "account identifier": "extracted_accounts",
+        "transaction amount": "extracted_amounts",
+        "transaction type": "extracted_tx_types",
         "country or jurisdiction": "extracted_countries",
-        "time or hour":            "extracted_time_flags",
-        "risk indicator":          "extracted_risk_factors",
-        "balance amount":          "extracted_balances",
-        # Note: "report identifier" is intentionally not stored in a separate
-        # column — it's carried through from the sar_id field directly.
+        "time or hour": "extracted_time_flags",
+        "risk indicator": "extracted_risk_factors",
+        "balance amount": "extracted_balances",
     }
 
-    # Accumulate all extracted spans by label
     for ent in entities:
         label = ent["label"]
-        text  = ent["text"]
+        text = ent["text"]
         if label in label_map:
             fields[label_map[label]].append(text)
 
-    # Deduplicate (same span extracted twice) and join with pipe separator.
-    # Empty lists become empty strings — preserves column structure in the CSV.
-    return {
-        k: " | ".join(sorted(set(v))) if v else ""
-        for k, v in fields.items()
-    }
+    return {k: " | ".join(sorted(set(v))) if v else "" for k, v in fields.items()}
+
+
+def _resolve_model(allow_fallback: bool):
+    """Return (model, extraction_method) or (None, 'regex_fallback')."""
+    cached = model_is_cached()
+    if config.GLINER_PREFER_LOCAL_CACHE and not cached:
+        if allow_fallback:
+            print(
+                "  GLiNER model is not in the local Hugging Face cache and offline mode is enabled.\n"
+                "  Using regex fallback. To use GLiNER once: connect to the internet and run:\n"
+                f"    python -c \"from gliner import GLiNER; GLiNER.from_pretrained('{config.GLINER_MODEL}')\"\n"
+            )
+            return None, "regex_fallback"
+        raise RuntimeError(
+            f"GLiNER model '{config.GLINER_MODEL}' is not cached. "
+            "Download it once while online, or set GLINER_ALLOW_FALLBACK=True."
+        )
+
+    try:
+        return load_model(local_only=config.GLINER_PREFER_LOCAL_CACHE or cached), "gliner"
+    except Exception as exc:
+        if not allow_fallback:
+            raise
+        print(f"\n  WARNING: {exc}")
+        print("  Continuing with regex fallback extraction (no GLiNER model).\n")
+        return None, "regex_fallback"
 
 
 def run_gliner_extraction(
     narratives_path=None,
     output_path=None,
     sample_size=None,
+    allow_fallback: bool | None = None,
 ):
-    """
-    Run GLiNER extraction over all SAR narratives and write a risk register CSV.
-
-    Iterates through each narrative row, extracts entities, and builds a
-    structured output record that combines:
-      - Key transaction metadata (ID, risk score, tier, type, amount, country)
-      - GLiNER-extracted entities (accounts, amounts, countries, risk factors)
-      - The original SAR narrative (for analyst review and audit trail)
-
-    This output is the risk register — structured, searchable, and ready for
-    analyst review without requiring manual SAR data entry.
-
-    Args:
-        narratives_path: Path to SAR narratives CSV from sar_narrative_generator.py.
-        output_path:     Where to write the final risk register CSV.
-        sample_size:     If set, only process the first N narratives.
-                         Useful for quick testing before a full run.
-
-    Returns:
-        pd.DataFrame: Completed risk register with all structured fields.
-    """
     narratives_path = narratives_path or config.SAR_NARRATIVES_CSV
     output_path = output_path or config.RISK_REGISTER_CSV
+    allow_fallback = (
+        config.GLINER_ALLOW_FALLBACK if allow_fallback is None else allow_fallback
+    )
 
     df = pd.read_csv(narratives_path)
 
-    # Optional sample mode for fast iteration during development
     if sample_size:
         df = df.head(sample_size)
         print(f"Running on sample of {sample_size} narratives...")
     else:
         print(f"Running GLiNER on {len(df)} narratives...")
 
-    # Load model once outside the loop — reloading per row would be ~100x slower
-    model = load_model()
+    model, extraction_method = _resolve_model(allow_fallback)
 
     results = []
     for i, row in df.iterrows():
-        # Progress indicator — GLiNER runs at ~1–3 seconds per narrative on CPU
         if (i + 1) % 10 == 0:
             print(f"  Processing {i+1}/{len(df)}...")
 
-        # Extract entities from the SAR narrative text
-        entities    = extract_entities(model, row["sar_narrative"])
-        entity_dict = entities_to_dict(entities)
+        narrative = row["sar_narrative"]
+        if model is not None:
+            entities = extract_entities(model, narrative)
+        else:
+            entities = fallback_extract_entities(narrative, row)
 
-        # Build the output record: metadata + extracted entities + narrative
+        entity_dict = entities_to_dict(entities)
         extracted_amounts = entity_dict.get("extracted_amounts", "")
         extracted_countries = entity_dict.get("extracted_countries", "")
-        narrative = row["sar_narrative"]
 
         result = {
-            "sar_id":           row.get("sar_id", f"SAR-{i:05d}"),
-            "transaction_id":   row.get("transaction_id", ""),
-            "risk_score":       row.get("risk_score", ""),
-            "risk_tier":        row.get("risk_tier", ""),
+            "sar_id": row.get("sar_id", f"SAR-{i:05d}"),
+            "transaction_id": row.get("transaction_id", ""),
+            "risk_score": row.get("risk_score", ""),
+            "risk_tier": row.get("risk_tier", ""),
             "transaction_type": row.get("type", ""),
-            "amount":           row.get("amount", ""),
-            "country":          row.get("country", ""),
+            "amount": row.get("amount", ""),
+            "country": row.get("country", ""),
             "is_labeled_fraud": row.get("isFraud", ""),
-            "sar_narrative":    narrative,
+            "extraction_method": extraction_method,
+            "sar_narrative": narrative,
             **entity_dict,
             "amount_reconciled": _amount_in_extractions(
                 row.get("amount"), extracted_amounts, narrative
@@ -262,13 +317,13 @@ def run_gliner_extraction(
         cty_ok = register["country_reconciled"].mean() * 100
         print(f"  Extraction reconciliation: amount {amt_ok:.0f}% | country {cty_ok:.0f}%")
     print(f"\nRisk register saved to {output_path}")
+    print(f"  Extraction method: {extraction_method}")
     print(f"Columns: {list(register.columns)}")
 
-    # Print a quick sample so the operator can sanity-check extraction quality
     print(f"\nSample extraction:")
     print(register[[
         "sar_id", "risk_score", "extracted_accounts",
-        "extracted_amounts", "extracted_countries"
+        "extracted_amounts", "extracted_countries", "extraction_method",
     ]].head(3).to_string())
 
     return register
