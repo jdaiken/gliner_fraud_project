@@ -113,8 +113,13 @@ html, body, [class*="css"] {{
     color: {INTRAFI_NAVY};
 }}
 
+[data-testid="stAppViewContainer"] [data-testid="stMain"] .block-container {{
+    padding-top: 2.25rem;
+    padding-bottom: 2.5rem;
+    max-width: 1280px;
+}}
 .block-container {{
-    padding-top: 1.75rem;
+    padding-top: 2.25rem;
     padding-bottom: 2.5rem;
     max-width: 1280px;
 }}
@@ -124,11 +129,15 @@ html, body, [class*="css"] {{
     position: relative;
     background: linear-gradient(105deg, {INTRAFI_NAVY} 0%, #123a6b 45%, {INTRAFI_BLUE} 100%);
     color: {INTRAFI_WHITE};
-    margin: 0.25rem -1rem 1.75rem -1rem;
+    margin: 0.5rem -1rem 1.5rem -1rem;
     padding: 0;
     border-radius: 0 0 10px 10px;
     box-shadow: 0 6px 24px rgba(13, 44, 84, 0.18);
     overflow: hidden;
+    scroll-margin-top: 5rem;
+}}
+.site-hero--banner {{
+    margin-top: 0.75rem;
 }}
 .site-hero-accent {{
     height: 5px;
@@ -386,7 +395,7 @@ mark.narrative-kw {{
 
 /* Executive brief (EWS-style document layout) */
 .brief-page {{
-    padding-top: 0.35rem;
+    padding-top: 0;
     margin-top: 0;
 }}
 .brief-page h4 {{

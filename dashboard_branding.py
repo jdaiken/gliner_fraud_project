@@ -13,7 +13,7 @@ def render_site_hero(timestamp: str | None = None) -> None:
     ts = timestamp or datetime.now().strftime("%B %d, %Y · %H:%M")
     st.markdown(
         f"""
-        <header class="site-hero">
+        <header class="site-hero site-hero--banner">
           <div class="site-hero-accent"></div>
           <div class="site-hero-inner">
             <p class="site-eyebrow">Portfolio Demonstration</p>
