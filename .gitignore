@@ -6,6 +6,10 @@ venv/
 data/
 outputs/
 *.csv
+# Bundled demo data for Streamlit Cloud (tracked)
+!publish_data/
+!publish_data/**
+publish_data/**/*.xlsx
 *.tmp.xlsx
 prophet_hourly_forecast.csv
 .DS_Store

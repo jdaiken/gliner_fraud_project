@@ -6,7 +6,6 @@ fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
-serverAddress = "localhost"
 
 [runner]
 fastReruns = true

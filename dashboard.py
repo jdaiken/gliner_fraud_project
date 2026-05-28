@@ -249,6 +249,11 @@ def render_geography(scored: pd.DataFrame):
 
 
 def run_dashboard() -> None:
+    from bootstrap_data import bootstrap_published_data
+
+    if bootstrap_published_data():
+        st.toast("Loaded bundled demo data for this session.", icon="📊")
+
     st.set_page_config(
         page_title=PAGE_TITLE,
         page_icon="🔷",

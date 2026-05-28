@@ -1,0 +1,7 @@
+{
+  "PAYMENT": 0,
+  "TRANSFER": 1,
+  "CASH_OUT": 2,
+  "DEBIT": 3,
+  "CASH_IN": 4
+}

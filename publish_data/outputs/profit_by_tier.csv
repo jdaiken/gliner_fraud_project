@@ -1,0 +1,4 @@
+risk_tier,transaction_count,total_volume,avg_transaction,total_outflow,fraud_count,fraud_loss
+HIGH,256,5934614.38,23182.09,4610945.19,3,181857.05
+LOW,4054,1817579.77,448.34,1817579.77,29,12718.73
+MEDIUM,690,1716240.82,2487.31,1716240.82,13,9182.46

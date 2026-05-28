@@ -134,6 +134,16 @@ Then open **http://localhost:8501** in your browser if it does not open automati
 
 **Note:** `python dashboard.py` alone will not show a UI — use `launch_dashboard.py` or `streamlit run`.
 
+### Publish to Streamlit Cloud
+
+See **[DEPLOY_STREAMLIT.md](DEPLOY_STREAMLIT.md)**. Summary:
+
+1. Repo: `jdaiken/gliner_fraud_project`, branch `main`, main file **`dashboard.py`**
+2. Deploy at [share.streamlit.io](https://share.streamlit.io) (Python 3.11)
+3. Demo CSVs in `publish_data/` load automatically on the hosted app
+
+Local full pipeline (includes GLiNER): `pip install -r requirements-local.txt`
+
 ---
 
 ## Output Files

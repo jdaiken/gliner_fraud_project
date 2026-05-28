@@ -1,0 +1,15 @@
+metric,value
+Total transaction volume ($),9468434.97
+Total origin outflow ($),8144765.78
+Total destination inflow ($),171672081.44
+Average transaction size ($),1893.69
+Median transaction size ($),251.37
+Labeled fraud transaction count,45.0
+Labeled fraud loss ($),203758.24
+Fraud as % of total volume,2.15
+HIGH risk — transaction count,256.0
+HIGH risk — dollar exposure ($),5934614.38
+MEDIUM risk — transaction count,690.0
+MEDIUM risk — dollar exposure ($),1716240.82
+LOW risk — transaction count,4054.0
+LOW risk — dollar exposure ($),1817579.77
