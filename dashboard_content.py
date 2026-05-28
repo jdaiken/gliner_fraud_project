@@ -5,11 +5,7 @@ Analyst-facing explanations for dashboard metrics and pipeline outputs.
 from brand import RISK_ASSESSMENT_PAGE
 
 TAB_INTROS = {
-    "Brief": (
-        "The executive brief is your starting point for management and interview walkthroughs. "
-        "Scan tier mix, labeled fraud capture in the HIGH queue, and geographic pressure before drilling into detail. "
-        "Use it to frame how much volume sits in priority tiers, not as a filing decision."
-    ),
+    "Brief": "",
     "Overview": (
         "Overview shows how the full scored population splits across risk tiers and scores. "
         "Compare the pie chart to the histogram to see whether alerts cluster at tier cutoffs or spread across the scale. "

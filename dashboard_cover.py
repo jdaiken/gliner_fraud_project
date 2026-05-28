@@ -4,13 +4,11 @@ Executive brief (cover) for the Risk Analysis Profile dashboard.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from brand import APP_NAME, BRIEF_DISCLAIMER
+from brand import BRIEF_DISCLAIMER
 from dashboard_maps import country_aggregate
 from dashboard_theme import (
     INTRAFI_BLUE,
@@ -196,11 +194,8 @@ def _render_findings_cards(stats: dict) -> None:
 
 def render_cover_page(scored: pd.DataFrame, profit_summary: pd.DataFrame | None = None) -> None:
     stats = compute_brief_stats(scored, profit_summary)
-    stamp = datetime.now().strftime("%B %d, %Y")
 
-    st.markdown(f"**{APP_NAME}** · Executive snapshot · {stamp}")
-    _brief_divider()
-
+    st.markdown('<div class="brief-page">', unsafe_allow_html=True)
     st.markdown("#### Executive summary")
     st.markdown(
         f"""
@@ -237,3 +232,4 @@ is in the HIGH queue. See **Risk assessment** in the sidebar for full analysis a
         st.plotly_chart(fig_geo, width="stretch")
 
     st.markdown(BRIEF_DISCLAIMER)
+    st.markdown("</div>", unsafe_allow_html=True)

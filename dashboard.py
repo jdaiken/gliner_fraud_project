@@ -299,8 +299,9 @@ def run_dashboard() -> None:
         )
         st.stop()
 
-    render_site_hero()
-    render_tab_intro(page)
+    if page != "Brief":
+        render_site_hero()
+        render_tab_intro(page)
 
     if page == "Brief":
         try:
