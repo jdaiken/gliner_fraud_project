@@ -17,25 +17,55 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import config
 
 DEFAULT_N_TOPICS = 5
-TOKEN_RE = re.compile(r"[a-z][a-z0-9]{2,}")
+# Letters only (no digits); minimum length keeps bare numbers out of the word tree.
+TOKEN_RE = re.compile(r"\b[a-z]{3,}\b", re.IGNORECASE)
+
+# Boilerplate in synthetic SAR narratives — filtered from topics and word tree.
+TOPIC_CORPUS_STOP_WORDS = frozenset({
+    "account", "accounts", "activity", "amount", "amounts", "anomalous", "balance",
+    "beneficiary", "conducted", "country", "depleted", "detected", "dest", "dest",
+    "destination", "during", "elevated", "flagged", "from", "geographic", "hour",
+    "hours", "indicators", "initiated", "inconsistent", "integration", "jurisdiction",
+    "logged", "narrative", "orig", "originating", "origin", "pattern", "payment",
+    "previously", "rapid", "reduced", "report", "risk", "risks", "sar", "suspicious",
+    "total", "transaction", "transactions", "transfer", "transfers", "type", "types",
+    "unusual", "via", "window", "within", "cash", "out", "the", "and", "for", "with",
+    "this", "that", "was", "were", "has", "have", "had", "not", "may", "can", "its",
+    "into", "over", "per", "all", "any", "one", "two", "three", "four", "five", "six",
+    "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
+    "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
+    "million", "orig", "dest", "org", "old", "new", "time", "desc", "hour", "step",
+})
 
 
 def _normalize_stop_words(extra: list[str] | None) -> list[str]:
-    base = set(ENGLISH_STOP_WORDS)
+    base = set(ENGLISH_STOP_WORDS) | set(TOPIC_CORPUS_STOP_WORDS)
     if extra:
         for w in extra:
             w = str(w).strip().lower()
-            if w:
+            if w and not w.isdigit():
                 base.add(w)
     return sorted(base)
+
+
+def _is_valid_token(token: str, stop_words: set[str]) -> bool:
+    t = token.lower()
+    if not t or t in stop_words:
+        return False
+    if t.isdigit() or any(ch.isdigit() for ch in t):
+        return False
+    if len(t) < 3:
+        return False
+    return True
 
 
 def _tokenize_corpus(texts: list[str], stop_words: set[str]) -> list[list[str]]:
     tokens_per_doc = []
     for text in texts:
         toks = [
-            t for t in TOKEN_RE.findall(str(text).lower())
-            if t not in stop_words and len(t) > 2
+            t.lower() for t in TOKEN_RE.findall(str(text))
+            if _is_valid_token(t, stop_words)
         ]
         tokens_per_doc.append(toks)
     return tokens_per_doc
@@ -169,6 +199,7 @@ def fit_sar_topics(
         max_df=0.9,
         min_df=min_df,
         stop_words=stop_list,
+        token_pattern=r"(?u)\b[a-z][a-z]{2,}\b",
         ngram_range=(1, 2),
         max_features=500,
     )

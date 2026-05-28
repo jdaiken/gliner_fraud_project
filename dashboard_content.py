@@ -36,15 +36,15 @@ TAB_INTROS = {
         "and set topic count manually or from the suggestion. Sample narratives below are fully expanded with highlighted risk language."
     ),
     "Risk register": (
-        "Each case is a suspicious-activity report with details pulled from the investigation story. "
-        "Use **Customize what you see** to filter by priority, country, or cases that need a closer look. "
-        "Charts show queue size, whether stories match transactions, or dollars involved. "
-        "Browse as a table or one case at a time."
+        "SAR-level register with NLP extractions aligned to transaction fields. "
+        "Use **Customize what you see** to filter by risk tier, typology, jurisdiction, or extraction exceptions. "
+        "Charts break out review reasons, tier counts, typologies, or exposure. "
+        "Browse as a summary table or one SAR at a time."
     ),
     RISK_ASSESSMENT_PAGE: (
-        "The risk assessment is the long-form narrative analysis with regulatory references and chart callouts. "
-        "Scroll the full document for methodology, findings, and compliance mapping. "
-        "Use the PDF control on this page when you need a portable copy for reviewers."
+        "Risk assessment report for management and filing support, with regulatory references and chart callouts. "
+        "Use **Customize report view** to scope tiers, typologies, and jurisdictions; drill down by transaction type. "
+        "Generate PDF from the filtered scope when you need a portable copy for reviewers."
     ),
     "Exports": (
         "Exports packages deliverables for offline review: the Excel workpaper and risk assessment files. "

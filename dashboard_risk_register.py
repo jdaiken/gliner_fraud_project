@@ -1,5 +1,5 @@
 """
-Risk register tab — plain-language review queue for non-technical audiences.
+Risk register tab — SAR review queue with extraction quality and tier views.
 """
 
 from __future__ import annotations
@@ -24,37 +24,43 @@ from dashboard_theme import (
 )
 
 TIER_ORDER = ["HIGH", "MEDIUM", "LOW"]
-TIER_PLAIN = {
-    "HIGH": "High priority",
-    "MEDIUM": "Medium priority",
-    "LOW": "Lower priority",
-}
-TIER_HINT = {
-    "HIGH": "Review first — unusual activity flagged",
-    "MEDIUM": "Schedule review when capacity allows",
-    "LOW": "Monitor — within normal range for this run",
+TIER_LABEL = {
+    "HIGH": "High risk",
+    "MEDIUM": "Medium risk",
+    "LOW": "Low risk",
 }
 
-CHART_QUEUE = "How many cases in each priority level?"
-CHART_TRUST = "Does the story match the transaction record?"
-CHART_MONEY = "How much money is involved by priority?"
+CHART_REVIEW_REASONS = "Open items by review reason"
+CHART_RISK_TIER = "Cases by risk tier"
+CHART_TX_TYPE = "Cases by transaction type"
+CHART_EXPOSURE = "Exposure by risk tier"
 
-FOCUS_ALL = "All cases"
-FOCUS_ATTENTION = "Needs a closer look"
-FOCUS_HIGH = "High priority only"
-FOCUS_READY = "Looks consistent (amount and country match)"
+FOCUS_ALL = "All SARs"
+FOCUS_EXCEPTIONS = "Extraction exceptions"
+FOCUS_HIGH = "High risk tier only"
+FOCUS_ALIGNED = "Extraction aligned"
+
+REVIEW_REASON_ORDER = [
+    "Amount extraction gap",
+    "Jurisdiction extraction gap",
+    "Account not captured",
+    "Risk indicator not captured",
+    "High-risk tier alert",
+    "Ready for analyst review",
+]
 
 DEFAULT_TABLE_COLS = [
     "sar_id",
     "risk_tier",
     "risk_score",
+    "review_reason",
     "amount",
     "country",
     "transaction_type",
-    "amount_reconciled",
-    "country_reconciled",
     "extracted_accounts",
     "extracted_risk_factors",
+    "amount_reconciled",
+    "country_reconciled",
 ]
 
 
@@ -88,51 +94,83 @@ def _bool_series(col: pd.Series) -> pd.Series:
     return col.fillna(0).astype(float).astype(bool)
 
 
+def _amount_in_extracted(amount, extracted: str) -> bool:
+    if pd.isna(amount) or not str(extracted).strip():
+        return False
+    amt = float(amount)
+    hay = str(extracted).replace(",", "")
+    for fmt in (f"{amt:,.2f}", f"{amt:,.0f}", str(int(amt)) if amt == int(amt) else str(amt)):
+        if fmt.replace(",", "") in hay.replace(",", ""):
+            return True
+    return False
+
+
+def _country_in_extracted(country, extracted: str) -> bool:
+    if pd.isna(country) or not str(country).strip() or not str(extracted).strip():
+        return False
+    c = str(country).strip().upper()
+    parts = [p.strip().upper() for p in str(extracted).split("|") if p.strip()]
+    return c in parts
+
+
+def _review_flags_for_row(row: pd.Series) -> list[str]:
+    flags: list[str] = []
+    if not _amount_in_extracted(row.get("amount"), str(row.get("extracted_amounts", ""))):
+        flags.append("Amount extraction gap")
+    if not _country_in_extracted(row.get("country"), str(row.get("extracted_countries", ""))):
+        flags.append("Jurisdiction extraction gap")
+    if not str(row.get("extracted_accounts", "")).strip():
+        flags.append("Account not captured")
+    if not str(row.get("extracted_risk_factors", "")).strip():
+        flags.append("Risk indicator not captured")
+    if not flags and str(row.get("risk_tier", "")).upper() == "HIGH":
+        flags.append("High-risk tier alert")
+    if not flags:
+        flags.append("Ready for analyst review")
+    return flags
+
+
 def enrich_register(register: pd.DataFrame) -> pd.DataFrame:
-    """Add plain-language fields used by charts and filters."""
+    """Derived review reasons using extracted fields only (not full narrative text)."""
     df = register.copy()
     if "risk_tier" in df.columns:
         tier = df["risk_tier"].astype(str).str.upper()
-        df["priority_label"] = tier.map(TIER_PLAIN).fillna(tier)
+        df["priority_label"] = tier.map(TIER_LABEL).fillna(tier)
     else:
         df["priority_label"] = "Unknown"
 
-    amt_ok = _bool_series(df["amount_reconciled"]) if "amount_reconciled" in df.columns else None
-    cty_ok = _bool_series(df["country_reconciled"]) if "country_reconciled" in df.columns else None
+    flag_lists = df.apply(_review_flags_for_row, axis=1)
+    df["review_reason"] = flag_lists.apply(lambda xs: xs[0])
+    gap_set = {
+        "Amount extraction gap",
+        "Jurisdiction extraction gap",
+        "Account not captured",
+        "Risk indicator not captured",
+    }
+    df["needs_closer_look"] = flag_lists.apply(lambda xs: any(f in gap_set for f in xs))
+    df["extraction_aligned"] = ~df["needs_closer_look"]
 
-    if amt_ok is not None and cty_ok is not None:
-        df["story_matches_record"] = amt_ok & cty_ok
-        df["needs_closer_look"] = ~df["story_matches_record"]
-        df["match_summary"] = df.apply(_match_summary_row, axis=1)
-    elif amt_ok is not None:
-        df["story_matches_record"] = amt_ok
-        df["needs_closer_look"] = ~amt_ok
-        df["match_summary"] = df["amount_reconciled"].apply(_recon_label)
-    elif cty_ok is not None:
-        df["story_matches_record"] = cty_ok
-        df["needs_closer_look"] = ~cty_ok
-        df["match_summary"] = df["country_reconciled"].apply(_recon_label)
-    else:
-        df["story_matches_record"] = True
-        df["needs_closer_look"] = False
-        df["match_summary"] = "Not checked"
+    if "amount_reconciled" in df.columns:
+        df["_pipeline_amount"] = df["amount_reconciled"].apply(_recon_label)
+    if "country_reconciled" in df.columns:
+        df["_pipeline_country"] = df["country_reconciled"].apply(_recon_label)
 
+    def _match_summary(row: pd.Series) -> str:
+        segs = [f"Review: {row['review_reason']}"]
+        if "_pipeline_amount" in row.index:
+            segs.append(f"Amount check: {row['_pipeline_amount']}")
+        if "_pipeline_country" in row.index:
+            segs.append(f"Country check: {row['_pipeline_country']}")
+        return " · ".join(segs)
+
+    df["match_summary"] = df.apply(_match_summary, axis=1)
     return df
 
 
 def _recon_label(val) -> str:
     if pd.isna(val):
         return "Not checked"
-    return "Matches" if bool(float(val)) else "Needs review"
-
-
-def _match_summary_row(row: pd.Series) -> str:
-    parts = []
-    if "amount_reconciled" in row.index:
-        parts.append(f"Amount: {_recon_label(row['amount_reconciled'])}")
-    if "country_reconciled" in row.index:
-        parts.append(f"Country: {_recon_label(row['country_reconciled'])}")
-    return " · ".join(parts) if parts else "Not checked"
+    return "Aligned" if bool(float(val)) else "Exception"
 
 
 def _filter_register(df: pd.DataFrame, settings: dict) -> pd.DataFrame:
@@ -146,12 +184,12 @@ def _filter_register(df: pd.DataFrame, settings: dict) -> pd.DataFrame:
         out = out[out["risk_score"] >= min_score]
 
     focus = settings.get("focus", FOCUS_ALL)
-    if focus == FOCUS_ATTENTION and "needs_closer_look" in out.columns:
+    if focus == FOCUS_EXCEPTIONS and "needs_closer_look" in out.columns:
         out = out[out["needs_closer_look"]]
     elif focus == FOCUS_HIGH and "risk_tier" in out.columns:
         out = out[out["risk_tier"].astype(str).str.upper() == "HIGH"]
-    elif focus == FOCUS_READY and "story_matches_record" in out.columns:
-        out = out[out["story_matches_record"]]
+    elif focus == FOCUS_ALIGNED and "extraction_aligned" in out.columns:
+        out = out[out["extraction_aligned"]]
 
     if settings.get("countries") and "country" in out.columns:
         out = out[out["country"].astype(str).isin(settings["countries"])]
@@ -180,16 +218,16 @@ def _render_customize_panel(register: pd.DataFrame) -> dict:
                 "Priority levels to show",
                 options=TIER_ORDER,
                 default=TIER_ORDER,
-                format_func=lambda t: TIER_PLAIN.get(t, t),
+                format_func=lambda t: TIER_LABEL.get(t, t),
                 key="reg_filter_tiers",
             )
             focus = st.radio(
-                "Which cases?",
-                options=[FOCUS_ALL, FOCUS_ATTENTION, FOCUS_HIGH, FOCUS_READY],
+                "Review queue",
+                options=[FOCUS_ALL, FOCUS_EXCEPTIONS, FOCUS_HIGH, FOCUS_ALIGNED],
                 index=0,
                 key="reg_filter_focus",
-                help="“Needs a closer look” means the dollar amount or country in the story "
-                "did not match the transaction record.",
+                help="Extraction exceptions are SARs where NLP fields did not align with "
+                "transaction amount, jurisdiction, accounts, or risk indicators.",
             )
         with c2:
             min_score = 0
@@ -205,7 +243,7 @@ def _render_customize_panel(register: pd.DataFrame) -> dict:
                 )
             chart_view = st.radio(
                 "Main chart",
-                options=[CHART_QUEUE, CHART_TRUST, CHART_MONEY],
+                options=[CHART_REVIEW_REASONS, CHART_RISK_TIER, CHART_TX_TYPE, CHART_EXPOSURE],
                 index=0,
                 key="reg_chart_view",
             )
@@ -243,7 +281,7 @@ def _render_customize_panel(register: pd.DataFrame) -> dict:
         )
 
         avail_cols = [c for c in register.columns if not c.startswith("_") and c not in (
-            "priority_label", "story_matches_record", "needs_closer_look", "match_summary",
+            "priority_label", "extraction_aligned", "needs_closer_look", "match_summary",
         )]
         default_cols = [c for c in DEFAULT_TABLE_COLS if c in avail_cols]
         table_cols = st.multiselect(
@@ -257,7 +295,7 @@ def _render_customize_panel(register: pd.DataFrame) -> dict:
         sort_options = {
             "Highest risk score first": ("risk_score", False),
             "Largest dollar amount first": ("amount", False),
-            "Needs review first": ("needs_closer_look", False),
+            "Extraction exceptions first": ("needs_closer_look", False),
             "SAR ID (A to Z)": ("sar_id", True),
         }
         if "risk_score" not in register.columns:
@@ -287,7 +325,53 @@ def _render_customize_panel(register: pd.DataFrame) -> dict:
     }
 
 
-def _chart_review_queue(df: pd.DataFrame):
+def _chart_review_reasons(df: pd.DataFrame):
+    """Horizontal bar: count of SARs by primary review reason."""
+    if df.empty or "review_reason" not in df.columns:
+        return None
+    rows = []
+    for _, row in df.iterrows():
+        for reason in _review_flags_for_row(row):
+            rows.append({"reason": reason})
+    plot_df = pd.DataFrame(rows)
+    if plot_df.empty:
+        return None
+    counts = (
+        plot_df["reason"]
+        .value_counts()
+        .reindex(REVIEW_REASON_ORDER, fill_value=0)
+        .reset_index()
+    )
+    counts.columns = ["reason", "count"]
+    counts = counts[counts["count"] > 0].sort_values("count", ascending=True)
+    if counts.empty:
+        return None
+
+    reason_colors = {
+        "Amount extraction gap": INTRAFI_CORAL,
+        "Jurisdiction extraction gap": INTRAFI_CORAL,
+        "Account not captured": INTRAFI_GOLD,
+        "Risk indicator not captured": INTRAFI_GOLD,
+        "High-risk tier alert": INTRAFI_NAVY,
+        "Ready for analyst review": INTRAFI_TEAL,
+    }
+    fig = px.bar(
+        counts,
+        x="count",
+        y="reason",
+        orientation="h",
+        color="reason",
+        color_discrete_map=reason_colors,
+        text="count",
+        title="SAR review queue by reason",
+        labels={"reason": "Review reason", "count": "Number of SARs"},
+    )
+    fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+    fig.update_layout(showlegend=False, xaxis_title="Number of SARs", yaxis_title="")
+    return apply_plotly_theme(fig, hide_legend=True)
+
+
+def _chart_risk_tier_bar(df: pd.DataFrame):
     if df.empty or "risk_tier" not in df.columns:
         return None
     counts = (
@@ -297,75 +381,50 @@ def _chart_review_queue(df: pd.DataFrame):
         .reset_index()
     )
     counts.columns = ["tier", "count"]
-    counts["label"] = counts["tier"].map(TIER_PLAIN)
-    counts["hint"] = counts["tier"].map(TIER_HINT)
-    total = int(counts["count"].sum())
-
-    fig = px.pie(
+    counts["label"] = counts["tier"].map(TIER_LABEL)
+    fig = px.bar(
         counts,
-        names="label",
-        values="count",
+        x="label",
+        y="count",
         color="tier",
         color_discrete_map=tier_color_discrete(),
-        hole=0.52,
-        title="Your review queue — cases by priority",
+        text="count",
+        title="SAR count by risk tier",
+        labels={"label": "Risk tier", "count": "Number of SARs"},
     )
-    fig.update_traces(
-        textposition="outside",
-        textinfo="label+value",
-        hovertemplate="<b>%{label}</b><br>%{value} cases<br>%{percent}<extra></extra>",
+    fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+    fig.update_layout(
+        showlegend=False,
+        xaxis_title="",
+        yaxis_title="Number of SARs",
+        xaxis=dict(categoryorder="array", categoryarray=[TIER_LABEL[t] for t in TIER_ORDER]),
     )
-    fig.add_annotation(
-        text=f"<b>{total}</b><br>cases",
-        x=0.5, y=0.5, font_size=14, showarrow=False, font_color=INTRAFI_NAVY,
-    )
-    fig.update_layout(showlegend=False)
     return apply_plotly_theme(fig, hide_legend=True)
 
 
-def _chart_story_trust(df: pd.DataFrame):
-    """Stacked bar: narrative vs transaction agreement, by priority."""
-    if df.empty or "risk_tier" not in df.columns or "story_matches_record" not in df.columns:
+def _chart_by_transaction_type(df: pd.DataFrame):
+    col = "transaction_type" if "transaction_type" in df.columns else "type" if "type" in df.columns else None
+    if not col or df.empty:
         return None
-
-    rows = []
-    for tier in TIER_ORDER:
-        sub = df[df["risk_tier"].astype(str).str.upper() == tier]
-        if sub.empty:
-            continue
-        matched = int(sub["story_matches_record"].sum())
-        needs = len(sub) - matched
-        label = TIER_PLAIN.get(tier, tier)
-        rows.append({"priority": label, "tier": tier, "status": "Story matches transaction", "count": matched})
-        rows.append({"priority": label, "tier": tier, "status": "Needs a closer look", "count": needs})
-
-    plot_df = pd.DataFrame(rows)
-    if plot_df.empty:
-        return None
-
+    counts = df[col].astype(str).value_counts().reset_index()
+    counts.columns = ["transaction_type", "count"]
+    counts = counts.sort_values("count", ascending=True).tail(12)
     fig = px.bar(
-        plot_df,
-        x="priority",
-        y="count",
-        color="status",
-        barmode="stack",
-        title="Does the investigation story match the transaction?",
-        labels={"priority": "Priority", "count": "Number of cases", "status": ""},
-        color_discrete_map={
-            "Story matches transaction": INTRAFI_TEAL,
-            "Needs a closer look": INTRAFI_CORAL,
-        },
-        category_orders={"priority": [TIER_PLAIN[t] for t in TIER_ORDER]},
+        counts,
+        x="count",
+        y="transaction_type",
+        orientation="h",
+        color_discrete_sequence=[INTRAFI_BLUE],
+        text="count",
+        title="SAR count by transaction type",
+        labels={"transaction_type": "Transaction type", "count": "Number of SARs"},
     )
-    fig.update_layout(
-        legend_title_text="",
-        yaxis_title="Number of cases",
-        xaxis_title="",
-    )
-    return apply_plotly_theme(fig)
+    fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+    fig.update_layout(showlegend=False, xaxis_title="Number of SARs", yaxis_title="")
+    return apply_plotly_theme(fig, hide_legend=True)
 
 
-def _chart_money_by_priority(df: pd.DataFrame):
+def _chart_exposure_by_tier(df: pd.DataFrame):
     if df.empty or "risk_tier" not in df.columns or "amount" not in df.columns:
         return None
     g = (
@@ -374,7 +433,7 @@ def _chart_money_by_priority(df: pd.DataFrame):
         .rename(columns={"risk_tier": "tier", "amount": "total_amount"})
     )
     g = g.set_index("tier").reindex(TIER_ORDER, fill_value=0).reset_index()
-    g["label"] = g["tier"].map(TIER_PLAIN)
+    g["label"] = g["tier"].map(TIER_LABEL)
     fig = px.bar(
         g,
         x="label",
@@ -382,11 +441,16 @@ def _chart_money_by_priority(df: pd.DataFrame):
         color="tier",
         color_discrete_map=tier_color_discrete(),
         text="total_amount",
-        title="Total transaction dollars by priority",
-        labels={"label": "Priority", "total_amount": "Dollars ($)"},
+        title="Transaction exposure by risk tier",
+        labels={"label": "Risk tier", "total_amount": "Dollars ($)"},
     )
     fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
-    fig.update_layout(showlegend=False, xaxis_title="", yaxis_title="Dollars in flagged transactions")
+    fig.update_layout(
+        showlegend=False,
+        xaxis_title="",
+        yaxis_title="Exposure ($)",
+        xaxis=dict(categoryorder="array", categoryarray=[TIER_LABEL[t] for t in TIER_ORDER]),
+    )
     return apply_plotly_theme(fig, hide_legend=True)
 
 
@@ -397,25 +461,25 @@ def _render_summary_strip(df: pd.DataFrame) -> None:
 
     if "risk_tier" in df.columns:
         high = (df["risk_tier"].astype(str).str.upper() == "HIGH").sum()
-        c2.metric("High priority", f"{high:,}", help="Review these first")
+        c2.metric("High risk tier", f"{high:,}", help="SARs in the HIGH risk tier")
 
     if "needs_closer_look" in df.columns:
         attn = int(df["needs_closer_look"].sum())
         c3.metric(
-            "Needs a closer look",
+            "Extraction exceptions",
             f"{attn:,}",
-            help="Amount or country in the story did not match the transaction",
+            help="Missing or misaligned NLP extractions vs transaction fields",
         )
 
     if "amount" in df.columns and total:
         c4.metric(
-            "Dollars in view",
+            "Exposure in view",
             f"${df['amount'].sum():,.0f}",
-            help="Sum of transaction amounts for filtered cases",
+            help="Sum of transaction amounts for filtered SARs",
         )
-    elif "story_matches_record" in df.columns and total:
-        pct = 100 * df["story_matches_record"].mean()
-        c4.metric("Stories that match", f"{pct:.0f}%", help="Amount and country both aligned")
+    elif "extraction_aligned" in df.columns and total:
+        pct = 100 * df["extraction_aligned"].mean()
+        c4.metric("Extraction aligned", f"{pct:.0f}%", help="Share with complete NLP alignment")
 
 
 def _display_table(df: pd.DataFrame, columns: list[str], sort_col: str, sort_asc: bool) -> None:
@@ -438,7 +502,7 @@ def _display_table(df: pd.DataFrame, columns: list[str], sort_col: str, sort_asc
 
     if "risk_tier" in display.columns:
         display["risk_tier"] = display["risk_tier"].map(
-            lambda t: TIER_PLAIN.get(str(t).upper(), t)
+            lambda t: TIER_LABEL.get(str(t).upper(), t)
         )
 
     st.caption(f"Showing {len(display):,} of {len(view):,} cases")
@@ -456,7 +520,7 @@ def _tier_badge_class(tier: str) -> str:
 
 def _render_case_card(row: pd.Series) -> None:
     tier = str(row.get("risk_tier", "")).upper()
-    plain = TIER_PLAIN.get(tier, tier or "Unknown")
+    plain = TIER_LABEL.get(tier, tier or "Unknown")
     badge_cls = _tier_badge_class(tier)
     sid = html.escape(str(row.get("sar_id", "Case")))
     score = row.get("risk_score")
@@ -469,8 +533,8 @@ def _render_case_card(row: pd.Series) -> None:
 
     match_html = ""
     if "match_summary" in row.index:
-        cls = "ok" if row.get("story_matches_record") else "warn"
-        match_html = f'<p class="reg-status {cls}"><strong>Data check:</strong> {html.escape(str(row["match_summary"]))}</p>'
+        cls = "ok" if not row.get("needs_closer_look") else "warn"
+        match_html = f'<p class="reg-status {cls}"><strong>Review status:</strong> {html.escape(str(row["match_summary"]))}</p>'
 
     entities = []
     for col, label in (
@@ -518,8 +582,8 @@ def _render_case_browser(df: pd.DataFrame) -> None:
 
     def _label(sid):
         row = sort_df.loc[sort_df["sar_id"] == sid].iloc[0] if "sar_id" in sort_df.columns else sort_df.iloc[sid]
-        tier = TIER_PLAIN.get(str(row.get("risk_tier", "")).upper(), "")
-        flag = " · ⚠ needs review" if row.get("needs_closer_look") else ""
+        tier = TIER_LABEL.get(str(row.get("risk_tier", "")).upper(), "")
+        flag = " · Extraction exception" if row.get("needs_closer_look") else ""
         return f"{sid} — {tier}{flag}"
 
     pick = st.selectbox(
@@ -536,7 +600,7 @@ def _render_case_browser(df: pd.DataFrame) -> None:
 
     _render_case_card(row)
 
-    st.caption("Tip: use **Customize what you see** to filter to “Needs a closer look” and walk cases one by one.")
+    st.caption("Tip: filter to **Extraction exceptions** in Customize to walk the exception queue.")
 
 
 def render_risk_register(register: pd.DataFrame) -> None:
@@ -544,9 +608,9 @@ def render_risk_register(register: pd.DataFrame) -> None:
 
     st.markdown(
         '<div class="reg-hero">'
-        "<strong>What is this?</strong> Each row is a suspicious-activity case. "
-        "The system read the investigation story and pulled out accounts, amounts, and countries. "
-        "Your job is to confirm the story matches the transaction, then decide next steps."
+        "<strong>Risk register.</strong> Each SAR links a scored transaction to NLP-extracted "
+        "accounts, amounts, jurisdictions, and risk indicators. Use review reasons and tier "
+        "filters to prioritize escalation and quality checks before filing."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -561,27 +625,29 @@ def render_risk_register(register: pd.DataFrame) -> None:
 
     _render_summary_strip(filtered)
 
-    chart = settings.get("chart_view", CHART_QUEUE)
+    chart = settings.get("chart_view", CHART_REVIEW_REASONS)
     fig = None
-    if chart == CHART_TRUST:
-        fig = _chart_story_trust(filtered)
-    elif chart == CHART_MONEY:
-        fig = _chart_money_by_priority(filtered)
+    if chart == CHART_RISK_TIER:
+        fig = _chart_risk_tier_bar(filtered)
+    elif chart == CHART_TX_TYPE:
+        fig = _chart_by_transaction_type(filtered)
+    elif chart == CHART_EXPOSURE:
+        fig = _chart_exposure_by_tier(filtered)
     else:
-        fig = _chart_review_queue(filtered)
+        fig = _chart_review_reasons(filtered)
 
     if fig:
         st.plotly_chart(fig, width="stretch")
     else:
         st.info("Not enough data for the selected chart. Try another main chart option.")
 
-    if chart == CHART_QUEUE and "needs_closer_look" in filtered.columns:
+    if "needs_closer_look" in filtered.columns:
         attn = int(filtered["needs_closer_look"].sum())
         if attn:
             st.markdown(
-                f'<div class="risk-callout"><strong>{attn:,} cases need a closer look</strong><br>'
-                "The dollar amount or country in the story did not match the transaction record. "
-                "Open those cases first under <em>Which cases?</em> → Needs a closer look.</div>",
+                f"<div class='risk-callout'><strong>{attn:,} extraction exceptions</strong><br>"
+                "NLP fields did not fully align with transaction amount, jurisdiction, accounts, "
+                "or risk indicators. Filter to <em>Extraction exceptions</em> to work that queue.</div>",
                 unsafe_allow_html=True,
             )
 
@@ -593,8 +659,8 @@ def render_risk_register(register: pd.DataFrame) -> None:
     else:
         st.markdown("##### Case list")
         st.caption(
-            "Plain-language columns where possible. "
-            "**Needs review** under amount or country means the story and transaction disagree."
+            "Review reason shows why the SAR is in queue. "
+            "Pipeline amount/country checks reflect the saved reconciliation flags."
         )
         _display_table(
             filtered,

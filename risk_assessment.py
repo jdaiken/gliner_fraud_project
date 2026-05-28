@@ -151,12 +151,13 @@ def _render_regulatory_section() -> None:
 
 
 def _render_pdf_export_bar(scored: pd.DataFrame, profit_summary: pd.DataFrame | None) -> None:
+    export_df = st.session_state.get("ra_filtered_scored", scored)
     col1, col2 = st.columns([1, 2])
     with col1:
         if st.button("Generate risk assessment PDF", type="primary", width="stretch"):
             with st.spinner("Building PDF…"):
                 from dashboard_exports import export_risk_assessment_pdf
-                data, fname = export_risk_assessment_pdf(scored, profit_summary)
+                data, fname = export_risk_assessment_pdf(export_df, profit_summary)
                 st.session_state["risk_assessment_pdf"] = (data, fname)
             st.success("PDF ready.")
     with col2:
@@ -177,90 +178,101 @@ def render_risk_assessment_interactive(
     scored: pd.DataFrame,
     profit_summary: pd.DataFrame | None = None,
 ) -> None:
-    """Full scrollable risk assessment with all sections visible."""
-    stats = compute_brief_stats(scored, profit_summary)
-    blocks = build_narrative_blocks(stats)
-    stamp = datetime.now().strftime("%B %d, %Y")
+    """Full scrollable risk assessment with filters and typology drill-down."""
+    from risk_assessment_ui import render_assessment_controls, render_typology_drilldown
 
+    stamp = datetime.now().strftime("%B %d, %Y")
     st.markdown(f"## {APP_NAME}")
-    st.caption(f"Risk assessment · {stamp} · Full report (scroll to read all sections)")
+    st.caption(f"Risk assessment · {stamp} · Filter, drill down, then export")
+
+    filtered, settings = render_assessment_controls(scored)
+    if filtered.empty:
+        return
+
     _render_pdf_export_bar(scored, profit_summary)
     st.divider()
 
-    def _slug(label: str) -> str:
-        return label.lower().replace(" ", "-").replace("&", "")
+    stats = compute_brief_stats(filtered, profit_summary)
+    blocks = build_narrative_blocks(stats)
+    sections = set(settings.get("sections") or [])
 
-    toc = " · ".join(f"[{label}](#{_slug(label)})" for _, label in SECTIONS)
-    st.markdown(f"**On this page:** {toc}")
-    st.divider()
+    if "Executive summary" in sections:
+        st.markdown("## Executive summary")
+        for p in blocks["executive"]:
+            st.markdown(p)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Transactions in scope", f"{stats['n']:,}")
+        c2.metric("High-risk tier", f"{stats['n_high']:,}")
+        c3.metric("Fraud capture (labeled)", f"{stats['capture_pct']:.0f}%")
+        c4.metric("High-risk exposure", _fmt_money(stats["high_exposure"]))
+        st.divider()
 
-    st.markdown("## Executive summary")
-    for p in blocks["executive"]:
-        st.markdown(p)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Scored", f"{stats['n']:,}")
-    c2.metric("HIGH tier", f"{stats['n_high']:,}")
-    c3.metric("Fraud capture", f"{stats['capture_pct']:.0f}%")
-    c4.metric("HIGH exposure", _fmt_money(stats["high_exposure"]))
-    st.divider()
-
-    st.markdown("## Industry and product context")
-    st.markdown(
-        _no_em(
-            "Deposit-placement and reciprocal deposit programs help institutions keep large balances "
-            "insured and distributed across the network. Sweep structures move liquidity on short horizons. "
-            "This profile connects monitoring output to those operating themes."
+    if "Industry context" in sections:
+        st.markdown("## Industry and product context")
+        st.markdown(
+            _no_em(
+                "Deposit-placement and reciprocal deposit programs help institutions keep large balances "
+                "insured and distributed across the network. Sweep structures move liquidity on short horizons. "
+                "This profile connects monitoring output to those operating themes."
+            )
         )
-    )
-    for theme in RISK_AREA_THEMES:
-        st.markdown(f"### {theme['title']}")
-        st.markdown(_no_em(theme["body"]))
-    st.divider()
+        for theme in RISK_AREA_THEMES:
+            st.markdown(f"### {theme['title']}")
+            st.markdown(_no_em(theme["body"]))
+        st.divider()
 
-    st.markdown("## Monitoring findings")
-    for b in blocks["findings"]:
-        st.markdown(f"- {b}")
-    tier_fig = _tier_chart_fig(scored)
-    if tier_fig:
-        st.plotly_chart(tier_fig, width="stretch")
-    if "type" in scored.columns and "isFraud" in scored.columns:
-        g = scored.groupby("type")["isFraud"].mean().reset_index()
-        g.columns = ["type", "fraud_rate"]
-        g["fraud_rate_pct"] = 100 * g["fraud_rate"]
-        fig = px.bar(
-            g.sort_values("fraud_rate_pct"), x="type", y="fraud_rate_pct",
-            title="Labeled fraud rate by transaction type",
-            labels={"fraud_rate_pct": "Fraud rate (%)", "type": "Transaction type"},
+    if "Monitoring findings" in sections:
+        st.markdown("## Monitoring findings")
+        for b in blocks["findings"]:
+            st.markdown(f"- {b}")
+        tier_fig = _tier_chart_fig(filtered)
+        if tier_fig:
+            st.plotly_chart(tier_fig, width="stretch")
+        if "type" in filtered.columns and "isFraud" in filtered.columns:
+            g = filtered.groupby("type")["isFraud"].mean().reset_index()
+            g.columns = ["type", "fraud_rate"]
+            g["fraud_rate_pct"] = 100 * g["fraud_rate"]
+            fig = px.bar(
+                g.sort_values("fraud_rate_pct"), x="type", y="fraud_rate_pct",
+                title="Labeled fraud rate by transaction type (filtered scope)",
+                labels={"fraud_rate_pct": "Fraud rate (%)", "type": "Transaction type"},
+            )
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(apply_plotly_theme(fig, hide_legend=True), width="stretch")
+        st.divider()
+
+    if "Typology drill-down" in sections:
+        render_typology_drilldown(filtered)
+        st.divider()
+
+    if "Geographic risk" in sections:
+        st.markdown("## Geographic risk")
+        fig = _country_chart_fig(filtered)
+        if fig:
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("No country data available for the current filters.")
+        st.divider()
+
+    if "Regulatory alignment" in sections:
+        st.markdown("## Regulatory alignment")
+        st.markdown(
+            _no_em(
+                "The items below link deposit-network and sweep product themes to U.S. AML and "
+                "deposit-insurance rules. Confirm applicability with compliance and counsel."
+            )
         )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(apply_plotly_theme(fig, hide_legend=True), width="stretch")
-    st.divider()
+        _render_regulatory_section()
+        st.divider()
 
-    st.markdown("## Geographic risk")
-    fig = _country_chart_fig(scored)
-    if fig:
-        st.plotly_chart(fig, width="stretch")
-    else:
-        st.info("No country data available.")
-    st.divider()
-
-    st.markdown("## Regulatory alignment")
-    st.markdown(
-        _no_em(
-            "The items below link deposit-network and sweep product themes to U.S. AML and "
-            "deposit-insurance rules. Confirm applicability with compliance and counsel."
-        )
-    )
-    _render_regulatory_section()
-    st.divider()
-
-    st.markdown("## Recommended actions")
-    for b in blocks["actions"]:
-        st.markdown(f"- {b}")
-    st.markdown("### Source references")
-    for r in REGULATORY_REFERENCES:
-        st.markdown(f"- **{r['title']}:** {_links_markdown(r['links'])}")
-    st.caption("Demonstration data only. Not legal advice or a regulatory filing.")
+    if "Recommended actions" in sections:
+        st.markdown("## Recommended actions")
+        for b in blocks["actions"]:
+            st.markdown(f"- {b}")
+        st.markdown("### Source references")
+        for r in REGULATORY_REFERENCES:
+            st.markdown(f"- **{r['title']}:** {_links_markdown(r['links'])}")
+        st.caption("Demonstration data only. Not legal advice or a regulatory filing.")
 
 
 def _chart_images(scored: pd.DataFrame) -> dict[str, str]:
