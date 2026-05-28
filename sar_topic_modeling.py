@@ -103,11 +103,28 @@ def _topic_labels(top_terms_per_topic: list[list[str]]) -> list[str]:
     return labels
 
 
+def _feature_max_vector(X) -> np.ndarray:
+    """Per-feature max TF-IDF as a 1-D float64 vector (scipy sparse .max can return a matrix)."""
+    try:
+        from scipy.sparse import spmatrix
+    except ImportError:
+        spmatrix = ()  # type: ignore[misc, assignment]
+
+    if isinstance(X, spmatrix):
+        row = X.max(axis=0)
+        if hasattr(row, "toarray"):
+            return np.asarray(row.toarray(), dtype=np.float64).ravel()
+        if hasattr(row, "todense"):
+            return np.asarray(row.todense(), dtype=np.float64).ravel()
+
+    return np.asarray(X.max(axis=0), dtype=np.float64).ravel()
+
+
 def _filter_tfidf_by_z(X, feature_names: np.ndarray, z_threshold: float):
     if z_threshold <= 0 or X.shape[1] == 0:
         return X, feature_names
 
-    max_tfidf = np.asarray(X.max(axis=0)).ravel()
+    max_tfidf = _feature_max_vector(X)
     mu, sigma = max_tfidf.mean(), max_tfidf.std()
     if sigma < 1e-9:
         mask = np.ones(len(feature_names), dtype=bool)

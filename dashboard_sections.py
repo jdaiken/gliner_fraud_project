@@ -185,12 +185,21 @@ def _render_topic_explorer(working: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
                     st.rerun()
 
     n_use = int(st.session_state[SS_N_TOPICS])
-    topics_df, assigns_df, _ = fit_sar_topics(
-        working,
-        n_topics=n_use,
-        extra_stop_words=edited,
-        z_threshold=z_val,
-    )
+    try:
+        topics_df, assigns_df, _ = fit_sar_topics(
+            working,
+            n_topics=n_use,
+            extra_stop_words=edited,
+            z_threshold=z_val,
+        )
+    except Exception as exc:
+        st.warning(
+            "Topic model could not run with the current settings. "
+            "Try lowering the z-score threshold or reducing stop words. "
+            "Narrative previews below are still available."
+        )
+        st.caption(f"Detail: {exc}")
+        return pd.DataFrame(), pd.DataFrame()
 
     if not topics_df.empty:
         fig_topic = chart_topic_distribution(topics_df)
@@ -262,82 +271,9 @@ def render_sar_narratives(narratives: pd.DataFrame | None) -> None:
     )
 
 
-def _chart_register_priority_bar(register: pd.DataFrame, top_n: int = 15):
-    """Single triage chart: highest risk-score SARs in the register."""
-    if "risk_score" not in register.columns:
-        return None
-    plot_df = register.copy()
-    if "sar_id" in plot_df.columns:
-        plot_df["_label"] = plot_df["sar_id"]
-    else:
-        plot_df["_label"] = [f"Record {i}" for i in range(len(plot_df))]
-    top = plot_df.nlargest(top_n, "risk_score").sort_values("risk_score", ascending=True)
-    fig = px.bar(
-        top,
-        x="risk_score",
-        y="_label",
-        orientation="h",
-        color="risk_tier" if "risk_tier" in top.columns else None,
-        color_discrete_map=tier_color_discrete() if "risk_tier" in top.columns else None,
-        text="risk_score",
-        title=f"Priority review queue — top {len(top)} SARs by risk score",
-        labels={"risk_score": "Risk score", "_label": "SAR ID"},
-    )
-    fig.update_traces(texttemplate="%{text:.0f}", textposition="outside")
-    fig.update_layout(showlegend=True, xaxis_title="Risk score (0–100)", yaxis_title="", xaxis_range=[0, 105])
-    return apply_plotly_theme(fig)
-
-
 def render_risk_register(register: pd.DataFrame) -> None:
-    st.markdown(
-        "The risk register turns narrative text into structured fields for case systems. "
-        "**Look for:** high risk scores, weak amount or country reconciliation, and missing extracted entities."
-    )
-
-    r1, r2, r3 = st.columns(3)
-    r3.metric("SAR records", f"{len(register):,}")
-    if "amount_reconciled" in register.columns:
-        r1.metric("Amount match", f"{register['amount_reconciled'].mean() * 100:.0f}%")
-    if "country_reconciled" in register.columns:
-        r2.metric("Country match", f"{register['country_reconciled'].mean() * 100:.0f}%")
-
-    fig = _chart_register_priority_bar(register)
-    if fig:
-        st.plotly_chart(fig, width="stretch")
-    else:
-        st.info("Risk score column required for the priority chart.")
-
-    show_cols = [
-        c for c in [
-            "sar_id", "transaction_id", "risk_score", "risk_tier",
-            "transaction_type", "amount", "country",
-            "extracted_accounts", "extracted_amounts", "extracted_countries",
-            "extracted_risk_factors", "amount_reconciled", "country_reconciled",
-            "extraction_method",
-        ]
-        if c in register.columns
-    ]
-
-    interactive_table(
-        register[show_cols],
-        key_prefix="risk_reg",
-        title="Risk register",
-        help_text="Search and filter rows. Color shows tier; risk score uses a heat scale.",
-        tier_column="risk_tier",
-        filter_columns=["risk_tier", "transaction_type", "country", "extraction_method"],
-        default_sort="risk_score",
-        sort_desc=True,
-        max_rows=500,
-    )
-
-    if "sar_narrative" in register.columns and "sar_id" in register.columns:
-        sid = st.selectbox(
-            "Read full narrative",
-            register["sar_id"].tolist(),
-            key="register_narrative_pick",
-        )
-        text = register.loc[register["sar_id"] == sid, "sar_narrative"].iloc[0]
-        st.text_area("Narrative text", text, height=200, label_visibility="collapsed")
+    from dashboard_risk_register import render_risk_register as _render
+    _render(register)
 
 
 def render_exports(scored: pd.DataFrame, profit_summary: pd.DataFrame | None) -> None:

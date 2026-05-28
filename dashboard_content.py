@@ -36,9 +36,10 @@ TAB_INTROS = {
         "and set topic count manually or from the suggestion. Sample narratives below are fully expanded with highlighted risk language."
     ),
     "Risk register": (
-        "The risk register shows GLiNER-extracted entities from narrative text: accounts, amounts, countries, and risk factors. "
-        "Rows are colored by risk tier and risk score is heat-ranked so the highest-priority SARs surface first. "
-        "Check reconciliation metrics to see how often extracted values match transaction fields."
+        "Each case is a suspicious-activity report with details pulled from the investigation story. "
+        "Use **Customize what you see** to filter by priority, country, or cases that need a closer look. "
+        "Charts show queue size, whether stories match transactions, or dollars involved. "
+        "Browse as a table or one case at a time."
     ),
     RISK_ASSESSMENT_PAGE: (
         "The risk assessment is the long-form narrative analysis with regulatory references and chart callouts. "

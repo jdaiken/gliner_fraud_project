@@ -16,9 +16,8 @@ def render_site_hero(timestamp: str | None = None) -> None:
         <header class="site-hero">
           <div class="site-hero-accent"></div>
           <div class="site-hero-inner">
-            <p class="site-eyebrow">AML &amp; Transaction Monitoring · Portfolio Demonstration</p>
-            <p class="site-kicker">Research and risk reporting</p>
-            <h1 class="site-title">{APP_NAME}</h1>
+            <p class="site-eyebrow">Portfolio Demonstration</p>
+            <h1 class="site-title">Transaction Monitoring</h1>
             <p class="site-tagline">{TAGLINE}</p>
             <p class="site-meta">Run snapshot · {ts}</p>
           </div>
